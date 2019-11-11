@@ -1,7 +1,11 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const babelParser = require('@babel/parser');
+const babelGenerator = require('@babel/generator');
+
 const apiJson = require('./test/api-docs.json');
-const template = require('./template/index');
+const template = require('./template');
 const CONFIG = require('./config');
 const { NAME_STYLE } = require('./constant');
 
@@ -254,13 +258,147 @@ const getCustomApiInfo = apiInfo => ({
 });
 
 /**
+ * 获取指定内容的hash值
+ * @param {string} content
+ * @returns
+ */
+const getHash = content => {
+  const hash = crypto.createHash('sha256');
+  hash.update(content);
+  return hash.digest('hex');
+};
+
+/**
  * 写入单个API源代码到指定文件中
  * @param {string} filePath 写入文件路径
  * @param {string} apiSourceCode 源代码
  * @param {string} [flag='a'] 写入模式
  */
-const wirteApiSourceCodeIntoFile = (filePath, apiSourceCode, flag = 'a') => {
+const wirteApiSourceCodeIntoFile = (filePath, apiSourceCode, flag = 'a+') => {
   fs.writeFileSync(filePath, apiSourceCode, { flag });
+};
+
+/**
+ *
+ * @param {string} outputPath 文件目录路径
+ * @param {string} outputFilename 文件名
+ * @param {string} content 文件内容，用于生成hash
+ * @returns
+ */
+
+/**
+ * 获取输出文件路径
+ * @param {Object} outputConfig 输出文件配置对象
+ * @param {string} outputConfig.outputPath 文件目录路径
+ * @param {string} outputConfig.outputFilename 文件名
+ * @param {string} outputConfig.content 文件内容，用于生成hash
+ * @returns
+ */
+const getOutputFilePath = ({ outputPath, outputFilename, content }) => {
+  const {
+    output: { path: pathConfig, filename: filenameConfig } = {}
+  } = CONFIG;
+
+  outputPath = outputPath || pathConfig || `${__dirname}/api`;
+  outputFilename = outputFilename || filenameConfig || '[hash].js';
+
+  if (!fs.existsSync(outputPath)) {
+    fs.mkdirSync(outputPath, { recursive: true });
+  }
+
+  if (outputFilename.includes('[name]')) {
+    outputFilename = outputFilename.replace('[name]', 'index');
+  }
+
+  if (outputFilename.includes('[hash]')) {
+    const hash = getHash(content);
+    outputFilename = outputFilename.replace('[hash]', hash);
+  }
+
+  return path.resolve(outputPath, outputFilename);
+};
+
+/**
+ * 从源代码中获取抽象语法树
+ * @param {string} sourceCode 源代码
+ * @returns
+ */
+const getASTFromSourceCode = sourceCode => {
+  if (!sourceCode) return null;
+  return babelParser.parse(sourceCode, { sourceType: 'module' });
+};
+
+/**
+ * 从抽象语法树中删除外层变量
+ * @param {Object} ast 抽象语法树
+ * @param {string} varName 变量名称
+ * @returns
+ */
+const deleteOuterDeclarationFromAST = (ast, varName) => {
+  return {
+    ...ast,
+    program: {
+      ...ast.program,
+      body: ast.program.body.reduce((body, node) => {
+        if (isVariableDeclarationNode(node)) {
+          let declarations = node.declarations || node.declaration.declarations;
+          if (declarations && declarations.length) {
+            declarations = declarations.filter(declaration =>
+              !isExpectedVariableDeclaration(declaration, varName)
+            );
+            if (node.declarations) {
+              node.declarations = declarations;
+            }
+            if (node.declaration && node.declaration.declarations) {
+              node.declaration.declarations = declarations;
+            }
+            if (!declarations.length) return body;
+          }
+        }
+        return [...body, node];
+      }, [])
+    }
+  };
+};
+
+/**
+ * 判断给定语法树节点是否是变量声明
+ * @param {Object} node .program.body下的节点
+ */
+const isVariableDeclarationNode = (node, varName) =>
+  node.declaration || node.declarations;
+
+/**
+ * 判断声明是否是是指定的变量名称
+ * @param {Object} declaration .program.body[n].declarations下的节点
+ * @param {string} varName 变量名称
+ */
+const isExpectedVariableDeclaration = (declaration, varName) =>
+  declaration.type === 'VariableDeclarator' &&
+  declaration.id &&
+  declaration.id.name === varName &&
+  declaration.id.type === 'Identifier';
+
+/**
+ * 语法树最外层是否已存在给定变量名称
+ * @param {Object} ast 抽象语法树对象
+ * @param {string} varName 变量名称
+ * @returns
+ */
+const hasExistedVarInASTOuter = (ast, varName) => {
+  if (!(ast && varName)) return false;
+  try {
+    return ast.program.body.some(node => {
+      return (
+        isVariableDeclarationNode(node) &&
+        (node.declarations || node.declaration.declarations).some(declaration =>
+          isExpectedVariableDeclaration(declaration, varName)
+        )
+      );
+    });
+  } catch (error) {
+    return false;
+  }
 };
 
 const apiPaths = apiJson.paths;
@@ -268,17 +406,10 @@ const apiList = regenerateApiInfoList(apiPaths);
 const apiListGroupByPath = getApiInfoListGroupByPath(apiList);
 const apiListGroupByTag = getApiInfoListGroupByTag(apiList);
 
-const apiInfo = apiList[0];
+const sourceCode = generateApiListSourceCode(apiList);
 
-wirteApiSourceCodeIntoFile(
-  path.resolve(__dirname, 'api.js'),
-  generateApiSourceCodeFromTemplate(getCustomApiInfo(apiInfo))
-);
-
-wirteApiSourceCodeIntoFile(
-  path.resolve(__dirname, 'apiList.js'),
-  generateApiListSourceCode(apiList)
-);
-
-// console.log(apiListGroupByPath);
-// console.log(apiListGroupByTag);
+let ast = getASTFromSourceCode(sourceCode);
+ast = deleteOuterDeclarationFromAST(ast, 'getAppLastVersion');
+console.log(JSON.stringify(ast.program.body.slice(0, 3), null, 2));
+console.log(hasExistedVarInASTOuter(ast, 'getAppLastVersion'));
+// console.log(babelGenerator.default(ast).code);

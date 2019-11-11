@@ -10,6 +10,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@babel/generator": "^7.7.2",
+    "@babel/parser": "^7.7.3",
     "commander": "^4.0.0"
   },
   "devDependencies": {

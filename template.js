@@ -1,7 +1,7 @@
 const template = ({ tags, summary, name, path, method, customMethod }) => `
 // ${tags.join(',')}
 // ${summary}
-const ${name}  = params => {
+export const ${name}  = params => {
   return ${customMethod}(\`${path.replace(/\{/g, '${params.')}\`, params)
 }
 `;

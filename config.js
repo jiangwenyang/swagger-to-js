@@ -1,6 +1,10 @@
 const { NAME_STYLE } = require('./constant');
 
 const CONFIG = {
+  output: {
+    path: `${__dirname}/api/test`,
+    filename: '[name].js'
+  },
   customMethod: {
     // 自定义方法映射
     get: 'get',
